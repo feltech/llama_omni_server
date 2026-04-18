@@ -1,0 +1,5 @@
+InheritParentConfig: true
+Checks: >
+    -readability-function-cognitive-complexity,
+    -cppcoreguidelines-avoid-reference-coroutine-parameters,
+    -cppcoreguidelines-avoid-capturing-lambda-coroutines

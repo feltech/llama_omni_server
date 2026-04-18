@@ -1,0 +1,22 @@
+[requires]
+llama-cpp/b6565
+libsndfile/1.2.2
+stb/cci.20230920
+mdspan/0.6.0
+spdlog/1.17.0
+eigen/5.0.1
+boost/1.90.0
+yaml-cpp/0.8.0
+nlohmann_json/3.11.3
+ms-gsl/4.2.0
+# Tests
+catch2/3.13.0
+
+[generators]
+CMakeDeps
+CMakeToolchain
+
+[options]
+llama-cpp/*:with_cuda=True
+llama-cpp/*:shared=True
+boost/*:without_cobalt=False

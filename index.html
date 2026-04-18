@@ -1,0 +1,703 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>llama-omni-server</title>
+  <style>
+    :root {
+      --bg: #f2efe8;
+      --panel: #fffaf0;
+      --line: #c7bda9;
+      --text: #201a14;
+      --accent: #0f766e;
+      --accent-strong: #115e59;
+      --danger: #b91c1c;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.16), transparent 24%),
+        radial-gradient(circle at top right, rgba(180, 83, 9, 0.12), transparent 22%),
+        linear-gradient(180deg, #f8f4ec 0%, var(--bg) 100%);
+      min-height: 100vh;
+    }
+
+    main {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .panel {
+      background: rgba(255, 250, 240, 0.92);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: 0 20px 40px rgba(32, 26, 20, 0.08);
+      overflow: hidden;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 14px 18px;
+      border-bottom: 1px solid rgba(199, 189, 169, 0.75);
+      background: rgba(255, 255, 255, 0.65);
+    }
+
+    .panel-title {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #6b6259;
+    }
+
+    .statusbar {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      padding: 14px 18px;
+    }
+
+    .status-card {
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid rgba(199, 189, 169, 0.7);
+      border-radius: 12px;
+      padding: 10px 12px;
+    }
+
+    .status-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #6b6259;
+    }
+
+    .status-value {
+      margin-top: 6px;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .video-wrap {
+      padding: 18px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 220px;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .video-stage {
+      background: #111;
+      border-radius: 16px;
+      overflow: hidden;
+      aspect-ratio: 1 / 1;
+      border: 1px solid rgba(199, 189, 169, 0.7);
+    }
+
+    canvas, video {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
+    }
+
+    .controls {
+      display: grid;
+      gap: 10px;
+      align-content: start;
+    }
+
+    .controls input, .controls button, textarea {
+      font: inherit;
+    }
+
+    .controls input, textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fffdfa;
+      color: var(--text);
+    }
+
+    .controls button {
+      border: 0;
+      border-radius: 12px;
+      padding: 10px 14px;
+      background: var(--accent);
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .controls button.secondary {
+      background: #60584f;
+    }
+
+    .controls button.danger {
+      background: var(--danger);
+    }
+
+    .controls button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .transcript {
+      padding: 18px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .log {
+      min-height: 240px;
+      max-height: 420px;
+      overflow: auto;
+      display: grid;
+      gap: 10px;
+      padding-right: 4px;
+    }
+
+    .entry {
+      border: 1px solid rgba(199, 189, 169, 0.7);
+      border-radius: 14px;
+      padding: 12px 14px;
+      background: rgba(255, 255, 255, 0.7);
+    }
+
+    .entry.user { border-left: 6px solid #b45309; }
+    .entry.assistant { border-left: 6px solid var(--accent); }
+    .entry.system { border-left: 6px solid #60584f; }
+    .entry.assistant.voice {
+        border-left-color: var(--accent);
+    }
+    .entry.assistant.text-reply {
+        border-left-color: #6366f1;
+    }
+
+    .entry-meta {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.11em;
+      color: #6b6259;
+      margin-bottom: 6px;
+    }
+
+    .composer {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    .hint {
+      font-size: 13px;
+      color: #6b6259;
+      line-height: 1.4;
+    }
+
+    @media (max-width: 840px) {
+      .statusbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .video-wrap { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Session Status</div>
+        <div id="statusText" class="hint">Disconnected</div>
+      </div>
+      <div class="statusbar">
+        <div class="status-card">
+          <div class="status-label">WebSocket</div>
+          <div id="wsState" class="status-value">closed</div>
+        </div>
+        <div class="status-card">
+          <div class="status-label">Listening</div>
+          <div id="listening" class="status-value">No</div>
+        </div>
+        <div class="status-card">
+          <div class="status-label">Last Video Decode</div>
+          <div id="videoLast" class="status-value">never</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Last Acked Video Frame</div>
+        <div id="videoInfo" class="hint">No frame acked yet</div>
+      </div>
+      <div class="video-wrap">
+        <div class="video-stage">
+          <canvas id="videoCanvas" width="448" height="448"></canvas>
+        </div>
+        <div class="controls">
+          <input id="wsUrl" type="text" value="" aria-label="WebSocket URL">
+          <button id="connectBtn">Connect</button>
+          <button id="disconnectBtn" class="secondary" disabled>Disconnect</button>
+          <button id="micBtn" class="secondary" disabled>Start Microphone</button>
+          <button id="camBtn" class="secondary" disabled>Start Camera</button>
+          <div class="hint">
+            The camera preview is not shown locally. The canvas displays the last frame acknowledged by the server after model-side video processing.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Chat</div>
+        <div class="hint">Shows both speech-chunk text and typed text turns.</div>
+      </div>
+      <div class="transcript">
+        <div id="log" class="log"></div>
+        <div class="composer">
+          <textarea id="textInput" placeholder="Type a duplex-context message"></textarea>
+          <button id="sendBtn" disabled>Send</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <video id="cameraPreview" playsinline muted hidden></video>
+
+  <script src="https://cdn.jsdelivr.net/npm/@msgpack/msgpack/dist.es5+umd/msgpack.min.js"></script>
+  <script>
+    (() => {
+      const { encode, decode } = window.MessagePack;
+
+      const elements = {
+        wsUrl: document.getElementById('wsUrl'),
+        connectBtn: document.getElementById('connectBtn'),
+        disconnectBtn: document.getElementById('disconnectBtn'),
+        micBtn: document.getElementById('micBtn'),
+        camBtn: document.getElementById('camBtn'),
+        sendBtn: document.getElementById('sendBtn'),
+        textInput: document.getElementById('textInput'),
+        log: document.getElementById('log'),
+        wsState: document.getElementById('wsState'),
+        listening: document.getElementById('listening'),
+        videoLast: document.getElementById('videoLast'),
+        statusText: document.getElementById('statusText'),
+        videoInfo: document.getElementById('videoInfo'),
+        videoCanvas: document.getElementById('videoCanvas'),
+        cameraPreview: document.getElementById('cameraPreview'),
+      };
+
+      const state = {
+        ws: null,
+        micStream: null,
+        camStream: null,
+        audioContext: null,
+        scriptProcessor: null,
+        sourceNode: null,
+        playbackContext: null,
+        playbackCursorSec: 0,
+        videoIntervalId: null,
+        nextVideoSeq: 1,
+        connected: false,
+        currentAssistantEntry: null,
+        currentAssistantKind: null,
+      };
+
+      const canvasCtx = elements.videoCanvas.getContext('2d', { willReadFrequently: true });
+      const captureCanvas = document.createElement('canvas');
+      captureCanvas.width = 448;
+      captureCanvas.height = 448;
+      const captureCtx = captureCanvas.getContext('2d', { willReadFrequently: true });
+
+      const defaultWsUrl = () => {
+        const host = window.location.hostname || '127.0.0.1';
+        return `ws://${host}:8080`;
+      };
+
+      elements.wsUrl.value = defaultWsUrl();
+
+      function setStatus(message) {
+        elements.statusText.textContent = message;
+      }
+
+      function setConnected(connected) {
+        state.connected = connected;
+        elements.connectBtn.disabled = connected;
+        elements.disconnectBtn.disabled = !connected;
+        elements.sendBtn.disabled = !connected;
+        elements.micBtn.disabled = !connected;
+        elements.camBtn.disabled = !connected;
+        elements.wsState.textContent = connected ? 'open' : 'closed';
+      }
+
+      function appendEntry(kind, label, text) {
+        const entry = document.createElement('div');
+        entry.className = `entry ${kind}`;
+
+        const meta = document.createElement('div');
+        meta.className = 'entry-meta';
+        meta.textContent = label;
+
+        const body = document.createElement('div');
+        body.textContent = text;
+
+        entry.append(meta, body);
+        elements.log.appendChild(entry);
+        elements.log.scrollTop = elements.log.scrollHeight;
+      }
+
+      function setListening(value) {
+        elements.listening.textContent = value ? 'Yes' : 'No';
+      }
+
+      function finalizeAssistantEntry() {
+        state.currentAssistantEntry = null;
+        state.currentAssistantKind = null;
+      }
+
+      function getOrCreateAssistantEntry(kind) {
+        if (state.currentAssistantEntry && state.currentAssistantKind === kind) {
+          return state.currentAssistantEntry;
+        }
+        finalizeAssistantEntry();
+
+        const entry = document.createElement('div');
+        entry.className = `entry assistant ${kind}`;
+
+        const meta = document.createElement('div');
+        meta.className = 'entry-meta';
+        meta.textContent = kind === 'voice' ? 'assistant (voice)' : 'assistant (text)';
+
+        const body = document.createElement('div');
+        body.className = 'entry-body';
+        body.textContent = '';
+
+        entry.append(meta, body);
+        elements.log.appendChild(entry);
+        elements.log.scrollTop = elements.log.scrollHeight;
+
+        state.currentAssistantEntry = entry;
+        state.currentAssistantKind = kind;
+        return entry;
+      }
+
+      function appendToAssistantEntry(kind, text) {
+        const entry = getOrCreateAssistantEntry(kind);
+        const body = entry.querySelector('.entry-body');
+        body.textContent += text;
+        elements.log.scrollTop = elements.log.scrollHeight;
+      }
+
+      function sendFrame(frame) {
+        if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+          return;
+        }
+        state.ws.send(encode(frame));
+      }
+
+      function drawAckedFrame(rawBytes, seq) {
+        const width = 448;
+        const height = 448;
+        const rgba = new Uint8ClampedArray(width * height * 4);
+        for (let src = 0, dst = 0; src < rawBytes.length; src += 3, dst += 4) {
+          rgba[dst] = rawBytes[src];
+          rgba[dst + 1] = rawBytes[src + 1];
+          rgba[dst + 2] = rawBytes[src + 2];
+          rgba[dst + 3] = 255;
+        }
+        canvasCtx.putImageData(new ImageData(rgba, width, height), 0, 0);
+        elements.videoInfo.textContent = `Acked frame seq ${seq}`;
+      }
+
+      function enqueuePcmPlayback(rawBytes, seq) {
+        try {
+          const floatData = new Float32Array(rawBytes.buffer, rawBytes.byteOffset, rawBytes.byteLength / 4);
+          if (!state.playbackContext) {
+            state.playbackContext = new AudioContext({sampleRate: 24000});
+          }
+
+          const buffer = state.playbackContext.createBuffer(1, floatData.length, 24000);
+          buffer.copyToChannel(floatData, 0);
+
+          const source = state.playbackContext.createBufferSource();
+          source.buffer = buffer;
+          source.connect(state.playbackContext.destination);
+
+          const now = state.playbackContext.currentTime;
+          const startAt = Math.max(now, state.playbackCursorSec);
+          source.start(startAt);
+          state.playbackCursorSec = startAt + buffer.duration;
+
+          source.onended = () => {
+            sendFrame({type: 'speech_chunk_played', seq});
+          };
+        } catch (err) {
+          console.error('Error decoding PCM data. byteOffset=', rawBytes.byteOffset, 'byteLength=',
+                  rawBytes.byteLength, "error=", err);
+          // Always ACK or risk causing a hang.
+          sendFrame({type: 'speech_chunk_played', seq});
+        }
+      }
+
+      function downsampleTo16k(input, inputRate) {
+        if (inputRate === 16000) {
+          return new Float32Array(input);
+        }
+
+        const ratio = inputRate / 16000;
+        const outLength = Math.max(1, Math.round(input.length / ratio));
+        const output = new Float32Array(outLength);
+
+        for (let i = 0; i < outLength; i += 1) {
+          const start = Math.floor(i * ratio);
+          const end = Math.min(input.length, Math.floor((i + 1) * ratio));
+          let sum = 0;
+          let count = 0;
+          for (let j = start; j < end; j += 1) {
+            sum += input[j];
+            count += 1;
+          }
+          output[i] = count > 0 ? sum / count : input[Math.min(start, input.length - 1)];
+        }
+
+        return output;
+      }
+
+      async function startMicrophone() {
+        if (state.micStream) {
+          return;
+        }
+
+        state.micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        state.audioContext = new AudioContext();
+        state.sourceNode = state.audioContext.createMediaStreamSource(state.micStream);
+        state.scriptProcessor = state.audioContext.createScriptProcessor(4096, 1, 1);
+
+        state.scriptProcessor.onaudioprocess = (event) => {
+          if (!state.connected) {
+            return;
+          }
+
+          const input = event.inputBuffer.getChannelData(0);
+          const downsampled = downsampleTo16k(input, state.audioContext.sampleRate);
+          sendFrame({ type: 'audio_in', d: new Uint8Array(downsampled.buffer.slice(0)) });
+        };
+
+        state.sourceNode.connect(state.scriptProcessor);
+        state.scriptProcessor.connect(state.audioContext.destination);
+        elements.micBtn.textContent = 'Microphone On';
+        appendEntry('system', 'microphone', 'Microphone capture started');
+      }
+
+      function stopMicrophone() {
+        state.scriptProcessor?.disconnect();
+        state.sourceNode?.disconnect();
+        state.micStream?.getTracks().forEach((track) => track.stop());
+        state.audioContext?.close();
+        state.scriptProcessor = null;
+        state.sourceNode = null;
+        state.micStream = null;
+        state.audioContext = null;
+        elements.micBtn.textContent = 'Start Microphone';
+      }
+
+      async function startCamera() {
+        if (state.camStream) {
+          return;
+        }
+
+        state.camStream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 448, height: 448 },
+          audio: false,
+        });
+        elements.cameraPreview.srcObject = state.camStream;
+        await elements.cameraPreview.play();
+
+        state.videoIntervalId = window.setInterval(() => {
+          if (!state.connected) {
+            return;
+          }
+
+          captureCtx.drawImage(elements.cameraPreview, 0, 0, 448, 448);
+          const rgba = captureCtx.getImageData(0, 0, 448, 448).data;
+          const rgb = new Uint8Array(448 * 448 * 3);
+          for (let src = 0, dst = 0; src < rgba.length; src += 4, dst += 3) {
+            rgb[dst] = rgba[src];
+            rgb[dst + 1] = rgba[src + 1];
+            rgb[dst + 2] = rgba[src + 2];
+          }
+
+          sendFrame({ type: 'video_in', seq: state.nextVideoSeq++, d: rgb });
+        }, 1000);
+
+        elements.camBtn.textContent = 'Camera On';
+        appendEntry('system', 'camera', 'Camera capture started');
+      }
+
+      function stopCamera() {
+        if (state.videoIntervalId !== null) {
+          window.clearInterval(state.videoIntervalId);
+          state.videoIntervalId = null;
+        }
+        state.camStream?.getTracks().forEach((track) => track.stop());
+        state.camStream = null;
+        elements.cameraPreview.srcObject = null;
+        elements.camBtn.textContent = 'Start Camera';
+      }
+
+      function disconnect() {
+        stopMicrophone();
+        stopCamera();
+
+        if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+          sendFrame({ type: 'close' });
+          state.ws.close();
+        }
+
+        state.ws = null;
+        state.playbackContext?.close();
+        state.playbackContext = null;
+        state.playbackCursorSec = 0;
+        finalizeAssistantEntry();
+        setListening(false);
+        setConnected(false);
+        setStatus('Disconnected');
+      }
+
+      function onFrame(frame) {
+        switch (frame.type) {
+          case 'ready':
+            setStatus('Session ready');
+            appendEntry('system', 'server', 'Session ready');
+            break;
+          case 'status':
+            setListening(Boolean(frame.listening));
+            elements.videoLast.textContent =
+              typeof frame.video_last_ms === 'number' && frame.video_last_ms > 0
+                ? `${frame.video_last_ms} ms ago`
+                : 'never';
+            break;
+          case 'text':
+            appendToAssistantEntry('text-reply', frame.text ?? '');
+            break;
+          case 'speech_chunk':
+            appendToAssistantEntry('voice', frame.text ?? '');
+            if (frame.d) {
+              enqueuePcmPlayback(frame.d, frame.seq);
+            }
+            break;
+          case 'video_ack':
+            if (frame.d) {
+              drawAckedFrame(frame.d, frame.seq);
+            }
+            break;
+          case 'done':
+            if (frame.end_of_turn) {
+              finalizeAssistantEntry();
+            } else {
+              setStatus('Listening');
+            }
+            break;
+          case 'error':
+            appendEntry('system', `error:${frame.code ?? 'unknown'}`, frame.message ?? 'Unknown error');
+            setStatus(`Error: ${frame.code ?? 'unknown'}`);
+            break;
+          default:
+            console.debug('Unhandled frame:', frame.type, frame);
+            break;
+        }
+      }
+
+      function connect() {
+        if (state.ws) {
+          return;
+        }
+
+        const ws = new WebSocket(elements.wsUrl.value.trim());
+        ws.binaryType = 'arraybuffer';
+        state.ws = ws;
+
+        ws.onopen = () => {
+          setConnected(true);
+          setStatus('Connected, awaiting ready');
+          sendFrame({ type: 'init' });
+        };
+
+        ws.onmessage = (event) => {
+          const bytes = new Uint8Array(event.data);
+          const frame = decode(bytes);
+          onFrame(frame);
+        };
+
+        ws.onerror = () => {
+          setStatus('WebSocket error');
+        };
+
+        ws.onclose = () => {
+          disconnect();
+        };
+      }
+
+      elements.connectBtn.addEventListener('click', connect);
+      elements.disconnectBtn.addEventListener('click', disconnect);
+      elements.sendBtn.addEventListener('click', () => {
+        const text = elements.textInput.value.trim();
+        if (!text) {
+          return;
+        }
+        appendEntry('user', 'typed input', text);
+        sendFrame({ type: 'text', text });
+        elements.textInput.value = '';
+      });
+
+      elements.textInput.addEventListener('keydown', (event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+          event.preventDefault();
+          elements.sendBtn.click();
+        }
+      });
+
+      elements.micBtn.addEventListener('click', async () => {
+        if (state.micStream) {
+          stopMicrophone();
+          return;
+        }
+
+        try {
+          await startMicrophone();
+        } catch (error) {
+          appendEntry('system', 'microphone', `Failed to start microphone: ${error.message}`);
+        }
+      });
+
+      elements.camBtn.addEventListener('click', async () => {
+        if (state.camStream) {
+          stopCamera();
+          return;
+        }
+
+        try {
+          await startCamera();
+        } catch (error) {
+          appendEntry('system', 'camera', `Failed to start camera: ${error.message}`);
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

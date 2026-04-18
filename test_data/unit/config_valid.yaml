@@ -1,0 +1,18 @@
+model:
+  llm_path: "../../../models/gguf/MiniCPM-o-4_5-Q4_K_M.gguf"
+  vision_path: "../../../models/gguf/vision/MiniCPM-o-4_5-vision-F16.gguf"
+  audio_path: "../../../models/gguf/audio/MiniCPM-o-4_5-audio-F16.gguf"
+  tts_transformer_path: "../../../models/gguf/tts/MiniCPM-o-4_5-tts-transformer-F16.gguf"
+  tts_weights_path: "../../../models/gguf/tts/MiniCPM-o-4_5-tts-weights-F16.gguf"
+  projector_path: "../../../models/gguf/tts/MiniCPM-o-4_5-projector-F16.gguf"
+  token2wav_dir: "../../../models/gguf/token2wav-gguf"
+
+voice:
+  reference_wav: "../../default_ref_audio.wav"
+  reference_prompt_cache: "../../tmp/reference_prompt_cache.bin"
+
+prompts:
+  system_prompt_cache_path: "../../tmp/system_prompt_cache.bin"
+
+debug:
+  audio_output_wav: "../../tmp/output.wav"

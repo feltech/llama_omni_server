@@ -1,0 +1,78 @@
+# Exclusions
+# - llvmlibc-*
+#     Seems very vendor-specific.
+# - altera-*
+#     FPGA hardware specific.
+# - *-default-arguments-calls
+#     Often we have to call functions with default arguments.
+# - *-braces-around-statements
+#     Yes it's bugprone, but conciseness can help readability
+# - *-use-trailing-return-type
+#     Leading return type is less verbose and more familiar.
+# - llvm-header-guard
+#     De-facto standard #pragma once is preferred.
+# - *-default-arguments-declaration
+#     Default arguments are useful.
+# - -clion-misra-cpp2023-19-6-1
+#     Allow `#pragma once`.
+# - llvm-namespace-comment
+#     Conflicts with google-readability-namespace-comments, apparently.
+# - fuchsia-overloaded-operator
+#     Operator overload is useful, especially `operator()` for named lambdas.
+# - portability-avoid-pragma-once
+#     De-facto standard #pragma once is preferred.
+# - -hicpp-invalid-access-moved
+#     Duplicate of bugprone-use-after-move. Disabled to allow easier inline suppression.
+# - -fuchsia-trailing-return
+#     False positive flagging lambdas as disallowed for trailing return in clang-tidy 22.
+# - llvm-prefer-static-over-anonymous-namespace
+#     Conflicts with misc-use-anonymous-namespace. The C++ standard recommendation
+#     is anonymous namespaces for TU-local definitions; static is a C-ism.
+Checks: >
+    *,
+    -llvmlibc-*,
+    -altera-*,
+    -android-*,
+    -*-default-arguments-calls,
+    -*-braces-around-statements,
+    -*-use-trailing-return-type,
+    -llvm-header-guard,
+    -*-default-arguments-declarations,
+    -clion-misra-cpp2023-19-6-1,
+    -llvm-namespace-comment,
+    -fuchsia-overloaded-operator,
+    -portability-avoid-pragma-once,
+    -hicpp-invalid-access-moved,
+    -fuchsia-trailing-return,
+    -boost-use-ranges,
+    -misc-include-cleaner,
+    -llvm-prefer-static-over-anonymous-namespace,
+    -clang-analyzer-core.uninitialized.Branch,
+    -clang-diagnostic-deprecated-declarations
+WarningsAsErrors: '*'
+# Only report header issues for our own source tree, not for third-party
+# headers (Boost, spdlog, etc.) where we cannot make changes.
+HeaderFilterRegex: '.*(llama-omni-server/src|llama-omni-server/tests)/.*'
+FormatStyle: file
+CheckOptions:
+    # Allow ALL_CAPS macros used as constants. Otherwise auto-generated export header is caught.
+    -   key: cppcoreguidelines-macro-usage.CheckCapsOnly
+        value: true
+    # Allow breaking rule of 5 when only special function is a defaulted destructor.
+    -   key: hicpp-special-member-functions.AllowSoleDefaultDtor
+        value: true
+    # Allow structs where (all) member variables are public, even if the struct has member functions.
+    -   key: misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic
+        value: 1
+    -   key: cppcoreguidelines-special-member-functions.AllowSoleDefaultDtor
+        value: true
+    -   key: readability-identifier-length.IgnoredParameterNames
+        value: fn
+    -   key: readability-identifier-length.IgnoredVariableNames
+        value: fn
+    -   key: readability-identifier-naming.DefaultCase
+        value: lower_case
+    -   key: readability-identifier-naming.ClassCase
+        value: CamelCase
+    -   key: readability-identifier-naming.StructCase
+        value: CamelCase

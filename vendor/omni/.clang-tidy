@@ -1,0 +1,5 @@
+# Disable all clang-tidy checks for vendor code.
+# This directory contains code ported from external sources that is not
+# expected to comply with project style rules.
+InheritParentConfig: false
+Checks: "-*"

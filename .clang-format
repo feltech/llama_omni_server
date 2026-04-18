@@ -1,0 +1,35 @@
+BasedOnStyle: Google
+Language: Cpp
+Standard: c++17
+ColumnLimit: 100
+UseTab: Always
+TabWidth: 4
+IndentWidth: 4
+AccessModifierOffset: -4
+ConstructorInitializerIndentWidth: 4
+BreakBeforeBraces: Allman
+AlignAfterOpenBracket: AlwaysBreak
+AlignOperands: DontAlign
+AllowAllParametersOfDeclarationOnNextLine: true
+DerivePointerAlignment: false
+PointerAlignment: Middle
+BinPackArguments: false
+BinPackParameters: false
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortBlocksOnASingleLine: Empty
+FixNamespaceComments: true
+# Add `// namespace <name>` comments even for namespaces with only a single line. This is to match
+# clang-tidy checks.
+ShortNamespaceLines: 0
+QualifierAlignment: Right
+IncludeBlocks: Preserve
+IncludeCategories:
+  - Regex: '^<.*'
+    Priority: 1
+    SortPriority: 0
+    CaseSensitive: false
+  - Regex: '.*'
+    Priority: 2
+    SortPriority: 0
+    CaseSensitive: false

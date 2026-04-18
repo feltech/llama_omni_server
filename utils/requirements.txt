@@ -1,0 +1,9 @@
+# Requirements for llama-omni-server utility scripts.
+# Install into the project venv:
+#   pip install -r utils/requirements.txt
+
+# Audio I/O — used to work around torchaudio's torchcodec dependency
+soundfile>=0.12
+torch==2.10.0
+torchaudio==2.10.0
+torchcodec==0.10.0

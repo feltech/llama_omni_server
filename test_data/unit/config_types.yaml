@@ -1,0 +1,33 @@
+server:
+  port: 9001
+
+model:
+  llm_path: "../../../models/gguf/MiniCPM-o-4_5-Q4_K_M.gguf"
+
+inference:
+  n_ctx: 8192
+  temperature: 0.2
+  repeat_penalty: 1.2
+  repeat_penalty_last_n: 32
+  top_k: 10
+  top_p: 0.5
+  max_generation_tokens: 256
+  max_duplex_tokens: 128
+  clip_num_threads: 2
+
+tts:
+  max_audio_tokens: 128
+  temperature: 0.6
+  repeat_penalty: 1.1
+  top_k_tokens: 12
+  top_p_threshold: 0.7
+  repeat_penalty_last_n: 8
+
+logging:
+  level: "debug"
+  status_period_ms: 50
+
+vram:
+  kv_cache_gpu: false
+  tts_transformer_gpu: false
+  token2wav_gpu: false

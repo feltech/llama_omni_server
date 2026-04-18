@@ -1,0 +1,2 @@
+model:
+  llm_path: "../../../models/gguf/MiniCPM-o-4_5-Q4_K_M.gguf"

@@ -1,0 +1,165 @@
+# Example configuration for `llama-omni-server`.
+# All relative paths are resolved relative to this file's directory.
+
+server:
+  # IP address or hostname to bind the WebSocket server to.
+  # `0.0.0.0` listens on all network interfaces.
+  host: "0.0.0.0"
+
+  # TCP port for the WebSocket server.
+  # Set to `0` only for ephemeral-port test setups; normal runs should use a fixed port.
+  port: 8080
+
+model:
+  # Path to the main MiniCPM-o 4.5 LLM GGUF.
+  llm_path: "../../models/gguf/MiniCPM-o-4_5-Q4_K_M.gguf"
+
+  # Path to the CLIP vision encoder GGUF used to turn images/video frames into embeddings.
+  vision_path: "../../models/gguf/vision/MiniCPM-o-4_5-vision-F16.gguf"
+
+  # Path to the Whisper-style audio encoder GGUF used for duplex listening.
+  audio_path: "../../models/gguf/audio/MiniCPM-o-4_5-audio-F16.gguf"
+
+  # Path to the split TTS transformer GGUF that libllama can load directly.
+  tts_transformer_path: "../../models/gguf/tts/MiniCPM-o-4_5-tts-transformer-F16.gguf"
+
+  # Path to the split custom TTS weights GGUF containing non-standard tensors
+  # such as `emb_text`, `emb_code`, `head_code`, and projector weights.
+  tts_weights_path: "../../models/gguf/tts/MiniCPM-o-4_5-tts-weights-F16.gguf"
+
+  # Path to the semantic projector GGUF used to map LLM hidden states into the
+  # 768-d TTS semantic space.
+  projector_path: "../../models/gguf/tts/MiniCPM-o-4_5-projector-F16.gguf"
+
+  # Path to the Token2Wav vocoder model directory used to convert sampled TTS
+  # audio tokens into 24 kHz float PCM.
+  token2wav_dir: "../../models/gguf/token2wav-gguf"
+
+inference:
+  # llama.cpp context size for each live session.
+  # The model metadata advertises a theoretical maximum of 40960 tokens, but
+  # 10240 is the practical default for this app on the target 16 GiB GPU.
+  n_ctx: 10240
+
+  # Number of future tokens to reserve when deciding whether duplex history
+  # must be truncated to avoid overflowing the KV cache.
+  overflow_reserve: 512
+
+  # LLM sampling temperature for text generation.
+  # Set to `0.0` for greedy decoding in deterministic tests.
+  temperature: 0.7
+
+  # Repetition penalty applied by the libllama sampler chain during text generation.
+  repeat_penalty: 1.05
+
+  # Number of recent generated tokens included in the repetition-penalty window.
+  repeat_penalty_last_n: 64
+
+  # Restrict sampling to the highest-probability k tokens.
+  top_k: 40
+
+  # Nucleus sampling threshold.
+  top_p: 0.95
+
+  # Min-p sampling threshold. Tokens with probability less than min_p * max_prob
+  # are dropped from the candidate set.
+  min_p: 0.05
+
+  # Multiplier applied to the `<|listen|>` logit in duplex mode to bias how
+  # readily the model keeps listening instead of speaking.
+  listen_prob_scale: 1.0
+
+  # Multiplier applied to the `<|turn_eos|>` logit in duplex mode to bias how
+  # readily the model ends the overall turn once it has started responding.
+  turn_eos_prob_scale: 1.0
+
+  # Multiplier applied to the `<|chunk_eos|>` logit in duplex mode. Higher values cause shorter
+  # speech chunks delivered more frequently. Lower values cause longer chunks generated all at
+  # once.
+  chunk_eos_prob_scale: 1.0
+
+  # Start each session with simulatad silence followed by the llm choosing to listen, to encourage
+  # the model to wait for input before speaking.
+  duplex_force_listen_count: 5
+
+  # Duration in milliseconds of duplex audio units sent through the Whisper
+  # audio encoder.
+  speech_chunk_ms: 1000
+
+  # Hard safety cap for text-only generation.
+  max_generation_tokens: 1024
+
+  # Hard safety cap for duplex turn generation.
+  max_duplex_tokens: 512
+
+  # CPU thread count used by the CLIP image encoder.
+  clip_num_threads: 4
+
+voice:
+  # Reference voice WAV used to prefill the duplex system prompt for voice cloning.
+  reference_wav: "test_data/default_ref_audio.wav"
+
+  # Optional path to a saved prompt KV cache for the reference voice clone.
+  # If empty, the server looks for `prompt_cache.gguf` in the `token2wav_dir`.
+  reference_prompt_cache: ""
+
+prompts:
+  # System prompt injected at the start of each duplex session.
+  duplex_system: "Streaming Duplex Conversation! You are a helpful assistant."
+
+  # Optional path to a saved prompt KV cache for the entire duplex system prompt.
+  # Leave empty to disable prompt caching for the system prompt.
+  system_prompt_cache_path: ""
+
+tts:
+  # Hard cap on the number of audio tokens the TTS transformer may sample for
+  # one synthesis request before aborting.
+  max_audio_tokens: 700
+
+  # Sampling temperature for TTS audio-token generation.
+  temperature: 0.8
+
+  # Repetition penalty applied to recently generated TTS audio tokens.
+  repeat_penalty: 1.05
+
+  # Top-k filter size for TTS audio-token sampling.
+  top_k_tokens: 25
+
+  # Top-p threshold for TTS audio-token sampling.
+  top_p_threshold: 0.85
+
+  # Min-p threshold for TTS audio-token sampling.
+  min_p: 0.01
+
+  # Number of recent TTS audio tokens included in the repetition-penalty window.
+  repeat_penalty_last_n: 16
+
+debug:
+  # Optional output WAV path/prefix used to write per-turn synthesized debug audio.
+  # Leave empty to disable debug WAV output.
+  audio_output_wav: ""
+
+logging:
+  # spdlog log level for server-side logging.
+  level: "debug"
+
+  # Interval in milliseconds between periodic websocket status frames.
+  # Set to `0` to disable periodic client status updates.
+  status_period_ms: 200
+
+vram:
+  # Manual override for the number of LLM layers to offload to GPU.
+  # Use `-1` to let the VRAM planner choose automatically.
+  force_llm_gpu_layers: -1
+
+  # VRAM headroom in MiB reserved for the driver and transient allocations.
+  headroom_mib: 512
+
+  # Whether the per-session llama KV cache should live on the GPU.
+  kv_cache_gpu: true
+
+  # Whether the TTS transformer should be placed on the GPU.
+  tts_transformer_gpu: true
+
+  # Whether the Token2Wav vocoder should be placed on the GPU.
+  token2wav_gpu: true

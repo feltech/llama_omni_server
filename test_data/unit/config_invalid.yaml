@@ -1,0 +1,2 @@
+server: {host: "0.0.0.0", port: 8080
+# unclosed flow mapping — yaml-cpp throws a parse exception
