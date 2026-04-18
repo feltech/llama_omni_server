@@ -46,8 +46,8 @@ cutting edge of C++ and LLM software development, using entirely local hardware.
 
 ## How
 
-Uses llama.cpp as a library to execute the model(s). 
-[Boost.Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/index.html) is used for 
+Uses llama.cpp as a library to execute the model(s).
+[Boost.Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/index.html) is used for
 WebSockets, with messages structured using [MessagePack](https://msgpack.org/) for binary field
 support. The C++23 code is structured to heavily use C++20+ coroutines via
 [Boost.Cobalt](https://www.boost.org/library/latest/cobalt/). Only two CPU threads are used in
@@ -58,10 +58,10 @@ The model is able to run on official llama.cpp (rather than the llama.cpp-omni f
 the TTS model to be split into two parts via the bundled
 [split_tts_gguf.py](utils/split_tts_gguf.py) utility. Without this, model loading fails.
 
-Context overflow is handled using a sliding window approach. 
+Context overflow is handled using a sliding window approach.
 
 One of the issues in the upstream llama.cpp-omni implementation is that text can be generated much
-faster than the speech audio plays, breaking natural conversation. 
+faster than the speech audio plays, breaking natural conversation.
 
 To solve this, backpressure is applied to keep the speech audio roughly in sync with new token
 generation, with a small allowance to avoid long pauses between speech chunks. That is, speech
@@ -142,7 +142,7 @@ the client.
 
 ## Building
 
-Build dependencies are managed via [Conan](https://conan.io/), which also creates CMake presets 
+Build dependencies are managed via [Conan](https://conan.io/), which also creates CMake presets
 for the build:
 
 ```bash
@@ -165,6 +165,7 @@ Configure:
 conan install . -of build --build=missing -s "&:build_type=Debug"
 cmake --preset conan-debug -DLLAMAOMNISERVER_ENABLE_TESTS=ON
 ```
+
 Build:
 
 ```bash
@@ -173,17 +174,22 @@ cmake --build --parallel --preset conan-debug
 
 Test:
 
+Configure the root `config.example.yaml`, then
+
 ```bash
 ctest --test-dir build --output-on-failure --timeout 300
 ```
 
 ### CMake variables
 
-| Variable                             | Purpose                                                                                                                                                                                                               |
-|--------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `LLAMAOMNISERVER_ENABLE_TESTS`       | Set to `ON` to build the test suite (default: `ON`).                                                                                                                                                                  |
-| `LLAMAOMNISERVER_ENABLE_TEST_VENDOR` | Set to `ON` to build the exploratory vendor integration tests (require GPU and model files).                                                                                                                          |
-| `LLAMAOMNISERVER_MODEL_ROOT`         | Only required for if `LLAMAOMNISERVER_ENABLE_TEST_VENDOR` is enabled. Directory containing the GGUF model files (the `gguf/` directory, parent of `vision/`, `audio/`, `tts/`, `token2wav-gguf/`). Required by tests. |
+| Variable                             | Purpose                                                                                                                  |
+|--------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
+| `LLAMAOMNISERVER_ENABLE_TESTS`       | Set to `ON` to build the test suite (default: `ON`).                                                                     |
+| `LLAMAOMNISERVER_ENABLE_TEST_VENDOR` | Set to `ON` to build the exploratory vendor integration tests (require GPU and model files).                             |
+| `LLAMAOMNISERVER_MODEL_ROOT`         | For vendor tests - directory containing the GGUF model files (parent of `vision/`, `audio/`, `tts/`, `token2wav-gguf/`). |
+
+`LLAMAOMNISERVER_MODEL_ROOT` is only required if `LLAMAOMNISERVER_ENABLE_TEST_VENDOR` is
+enabled. Other tests make use of the `config.example.yaml` config file.
 
 The `LLAMAOMNISERVER_ENABLE_TEST_VENDOR` tests were developed prior to the main codebase to gain
 an understanding of the model and can be left disabled. They remain for historical purposes.
@@ -194,13 +200,10 @@ CTest injects the following environment variables into test processes automatica
 from the CMake variables above. You do not need to set them manually when using
 `ctest`.
 
-| Variable                         | Set from                                    | Purpose                                                                               |
-|----------------------------------|---------------------------------------------|---------------------------------------------------------------------------------------|
-| `LLAMAOMNISERVER_MODEL_ROOT`     | `LLAMAOMNISERVER_MODEL_ROOT` CMake variable | Root of the GGUF model files tree. Used by all GPU test suites to locate model files. |
-| `LLAMAOMNISERVER_TEST_REPO_ROOT` | `CMAKE_SOURCE_DIR`                          | Absolute path to the repository root. Used by tests to locate `test_data/`.           |
-
-`LLAMAOMNISERVER_MODEL_ROOT` should point to a directory with a structure similar to the following
-(exact filenames may depend on quantization)
+| Variable                         | Set from CMake variable      | 
+|----------------------------------|------------------------------|
+| `LLAMAOMNISERVER_MODEL_ROOT`     | `LLAMAOMNISERVER_MODEL_ROOT` |
+| `LLAMAOMNISERVER_TEST_REPO_ROOT` | `CMAKE_SOURCE_DIR`           |
 
 ### Wire protocol
 
@@ -220,10 +223,10 @@ tool to generate a prompt cache from a reference WAV file.
 ## AI coding assistant statement
 
 Coding assistants were used extensively, but all code was reviewed, and most code further edited,
-by a human. 
+by a human.
 
 The only substantive code virtually untouched by a human is the `index.html` client and
-the `gen_prompt_cache.py` and `split_tts_gguf.py` utilities. This README was almost entirely 
+the `gen_prompt_cache.py` and `split_tts_gguf.py` utilities. This README was almost entirely
 written by a human.
 
 An `AGENTS.md` is not included in the repo due to the need to refer to many directories outside
@@ -232,11 +235,11 @@ the repo for reference purposes (e.g. upstream sources).
 This project was in part embarked upon as an opportunity to experiment with AI coding assistants.
 [Claude Code](https://www.anthropic.com/product/claude-code) with Sonnet 4.6 and Opus 4.6 was used
 initially to help detangle and understand the spaghetti code in the llama.cpp-omni codebase, and
-is subsequently used sporadically throughout development. 
+is subsequently used sporadically throughout development.
 [OpenAI Codex](https://openai.com/codex/) with GPT 4.5 was used extensively in the mid-current
-stages of development. [OpenCode](https://opencode.ai/) with Z.Ai's 
+stages of development. [OpenCode](https://opencode.ai/) with Z.Ai's
 [GLM 4.7 Flash](https://huggingface.co/zai-org/GLM-4.7-Flash) model running locally via llama.cpp
-was attempted but proved unfruitful. Finally, some minor work was accomplished in late stages using 
+was attempted but proved unfruitful. Finally, some minor work was accomplished in late stages using
 [Qwen Code](https://qwen.ai/qwencode) with the default (at time of writing) Qwen 3.6 Plus model.
 
 ### A note on commit history
