@@ -13,6 +13,7 @@
  */
 
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <ranges>
@@ -50,6 +51,18 @@ constexpr int kStoryMaxDuplexTokens = 1024;
 constexpr std::chrono::seconds kBrowserChunkTurnWait{15};
 /// Near-zero amplitude used for silence trigger chunks.
 constexpr float kSilenceAmplitude = 1.0e-6F;
+/// Side length of the pre-resized RGB video frames expected by the websocket API.
+constexpr std::size_t kVideoFrameSide = 448;
+/// Total bytes in one 448x448 RGB websocket video frame.
+constexpr std::size_t kVideoFrameBytes = kVideoFrameSide * kVideoFrameSide * 3UZ;
+/// Synthetic RGB fill values for the shutdown-race video frame.
+constexpr std::uint8_t kTestFrameR = 0xAAU;
+constexpr std::uint8_t kTestFrameG = 0xBBU;
+constexpr std::uint8_t kTestFrameB = 0xCCU;
+/// Sequence number used by the close-during-work regression test.
+constexpr std::uint32_t kShutdownRaceVideoSeq = 4148U;
+/// Brief pause to let queued websocket frames enter the live session before close.
+constexpr std::chrono::milliseconds kShutdownDispatchSettleMs{50};
 namespace
 {
 
@@ -94,9 +107,10 @@ void send_audio_chunk(WsTestClient & client, std::span<float const> pcm)
 	std::vector<std::uint8_t> bytes(pcm.size_bytes());
 	std::memcpy(bytes.data(), pcm.data(), pcm.size_bytes());
 
-	nlohmann::json frame;
-	frame["type"] = "audio_in";
-	frame["d"] = nlohmann::json::binary(bytes);
+	auto const frame = nlohmann::json{
+		{"type", "audio_in"},
+		{"d", nlohmann::json::binary(std::move(bytes))},
+	};
 	client.send_msgpack(frame);
 }
 
@@ -107,6 +121,28 @@ void send_pcm_as_browser_chunks(WsTestClient & client, std::span<float const> pc
 		auto const chunk_end = std::min(offset + kE2eBrowserAudioChunkSamples, pcm.size());
 		send_audio_chunk(client, pcm.subspan(offset, chunk_end - offset));
 	}
+}
+
+std::vector<std::uint8_t> make_test_video_frame_bytes()
+{
+	std::vector<std::uint8_t> raw(kVideoFrameBytes);
+	for (std::size_t idx = 0; idx < raw.size(); idx += 3)
+	{
+		raw[idx + 0] = kTestFrameR;
+		raw[idx + 1] = kTestFrameG;
+		raw[idx + 2] = kTestFrameB;
+	}
+	return raw;
+}
+
+void send_test_video_frame(WsTestClient & client, std::uint32_t seq)
+{
+	auto const frame = nlohmann::json{
+		{"type", "video_in"},
+		{"seq", seq},
+		{"d", nlohmann::json::binary(make_test_video_frame_bytes())},
+	};
+	client.send_msgpack(frame);
 }
 
 }  // namespace
@@ -205,6 +241,40 @@ SCENARIO("disconnect without close frees the session")
 		{
 			THEN("the server responds with ready (session was freed)")
 			{
+				require_eventual_ready(server);
+			}
+		}
+	}
+}
+
+SCENARIO("close during in-flight audio and video work does not crash the subprocess server")
+{
+	GIVEN("a real omni_server subprocess with an initialized websocket session")
+	{
+		ServerProcess server;
+		server.wait_until_listening(kServerProcessStartTimeout);
+		auto client = server.connect();
+		client.send_msgpack({{"type", "init"}});
+		client.recv_type("ready");
+
+		WHEN("the client queues video and one duplex unit of audio, then closes immediately")
+		{
+			auto const pcm = read_wav_mono(test_data_dir() / "my_name_is_bob.wav").pcm;
+			REQUIRE(pcm.size() >= kDuplexChunkSamples);
+
+			send_test_video_frame(client, kShutdownRaceVideoSeq);
+			send_pcm_as_browser_chunks(client, std::span{pcm}.first(kDuplexChunkSamples));
+
+			// Give the server a brief window to dispatch the queued websocket frames
+			// into the live session before the close handshake races teardown.
+			std::this_thread::sleep_for(kShutdownDispatchSettleMs);
+			client.send_msgpack({{"type", "close"}});
+			std::this_thread::sleep_for(kCloseSettleMs);
+			client.drop();
+
+			THEN("the process stays alive and eventually accepts a replacement session")
+			{
+				INFO(server.read_log());
 				require_eventual_ready(server);
 			}
 		}

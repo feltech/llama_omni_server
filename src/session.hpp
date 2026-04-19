@@ -24,6 +24,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -286,6 +287,12 @@ public:
 	/// Return true once startup finished and the duplex loop is ready for input.
 	[[nodiscard]] bool startup_complete() const noexcept;
 
+	/// Request cooperative shutdown of the active session.
+	void request_shutdown() noexcept;
+
+	/// Return true if cooperative shutdown was requested.
+	[[nodiscard]] bool shutdown_requested() const noexcept;
+
 	/// @return Read-only reference to the conversation state.
 	[[nodiscard]] ConversationState const & conv() const noexcept
 	{
@@ -318,7 +325,7 @@ private:
 	/// Concurrent CLIP video encode loop. Reads `VideoFrame`s from
 	/// `video_in_ch_`, encodes via CLIP on `gpu_ex_`, and stores the latest
 	/// result in `pending_clip` for consumption by `loop_duplex_events()`.
-	[[nodiscard]] boost::cobalt::task<void> loop_video_in_ch(
+	[[nodiscard]] boost::cobalt::promise<void> loop_video_in_ch(
 		std::shared_ptr<boost::cobalt::channel<DuplexEvent>> merged_ch);
 
 	/// Encode a raw RGB frame with the CLIP vision encoder on the GPU.
@@ -334,13 +341,13 @@ private:
 	[[nodiscard]] boost::cobalt::task<void> batch_decode_image_on_gpu(ClipResult clip);
 
 	/// Buffer incoming PCM into fixed-size audio chunks, writing to `merged_ch`.
-	[[nodiscard]] boost::cobalt::task<void> loop_audio_in_ch(
+	[[nodiscard]] boost::cobalt::promise<void> loop_audio_in_ch(
 		std::shared_ptr<boost::cobalt::channel<DuplexEvent>> merged_ch);
 
 	/// Forward `TextInput` from `text_in_ch_` to `merged_ch`.
-	[[nodiscard]] boost::cobalt::task<void> loop_text_in_ch(
+	[[nodiscard]] boost::cobalt::promise<void> loop_text_in_ch(
 		std::shared_ptr<boost::cobalt::channel<DuplexEvent>> merged_ch);
-	boost::cobalt::task<void> loop_speech_ack_ch(
+	boost::cobalt::promise<void> loop_speech_ack_ch(
 		std::shared_ptr<boost::cobalt::channel<DuplexEvent>> merged_ch);
 
 	/// Run one duplex generation turn, writing speech chunks to `chunk_ch`.
@@ -424,6 +431,9 @@ private:
 	/// Write accumulated per-turn TTS PCM to a debug WAV if configured.
 	void flush_debug_audio_wav();
 
+	/// Throw `operation_aborted` if cooperative shutdown has been requested.
+	void throw_if_shutdown_requested() const;
+
 	/// Evict the oldest unit blocks from the KV cache until overflow headroom is restored.
 	[[nodiscard]] boost::cobalt::promise<bool> evict_oldest_units();
 
@@ -469,6 +479,8 @@ private:
 	int current_unit_start_{0};
 	/// True when an explicit duplex `<unit>` is currently open in KV.
 	bool current_unit_open_{false};
+	/// Cross-executor cooperative shutdown flag for active decode/generation work.
+	std::atomic<bool> shutdown_requested_{false};
 };
 
 }  // namespace llama_omni_server

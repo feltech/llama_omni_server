@@ -65,6 +65,7 @@
 #include <boost/asio/this_coro.hpp>
 #include <boost/cobalt/join.hpp>
 #include <boost/cobalt/spawn.hpp>
+#include <boost/cobalt/wait_group.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -99,6 +100,16 @@ constexpr int kInputAudioSampleRateHz{16000};
 
 /// Millisecond conversion factor used for PCM duration calculations.
 constexpr int kMillisPerSecond{1000};
+
+[[nodiscard]] bool is_session_shutdown_error(boost::system::error_code const & code) noexcept
+{
+	return code == boost::asio::error::operation_aborted || code == boost::asio::error::broken_pipe;
+}
+
+[[noreturn]] void throw_session_shutdown_requested()
+{
+	throw boost::system::system_error{boost::asio::error::operation_aborted};
+}
 
 // ── MiniCPM-o 4.5 duplex special token IDs ────────────────────────────────────
 // Source: AGENTS.md §"Duplex control tokens".
@@ -331,6 +342,24 @@ bool Session::startup_complete() const noexcept
 	return startup_complete_;
 }
 
+void Session::request_shutdown() noexcept
+{
+	shutdown_requested_.store(true, std::memory_order_relaxed);
+}
+
+bool Session::shutdown_requested() const noexcept
+{
+	return shutdown_requested_.load(std::memory_order_relaxed);
+}
+
+void Session::throw_if_shutdown_requested() const
+{
+	if (shutdown_requested())
+	{
+		throw_session_shutdown_requested();
+	}
+}
+
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static) -- false positive: coroutine
 // accesses member variables (gpu_ex_, control_ch_, etc.)
 boost::cobalt::task<void> Session::run()
@@ -356,6 +385,17 @@ boost::cobalt::task<void> Session::run()
 
 		// Enter the buffered-audio duplex loop.
 		co_await loop_duplex_events();
+	}
+	catch (boost::system::system_error const & ex)
+	{
+		if (is_session_shutdown_error(ex.code()))
+		{
+			spdlog::debug("session: run exiting during shutdown ({})", ex.what());
+		}
+		else
+		{
+			fatal_error = ex.what();
+		}
 	}
 	catch (std::exception const & ex)
 	{
@@ -383,22 +423,29 @@ boost::cobalt::promise<void> Session::fail_session(std::string message)
 {
 	spdlog::error("session: fatal error: {}", message);
 
-	try
+	if (shutdown_requested())
 	{
-		co_await output_ch_.write(OutFrame{ErrorOutFrame{.message = message}});
+		spdlog::debug("session: suppressing terminal error output during shutdown");
 	}
-	catch (boost::system::system_error const & ex)
+	else
 	{
-		spdlog::debug("session: failed to emit ErrorOutFrame ({})", ex.what());
-	}
+		try
+		{
+			co_await output_ch_.write(OutFrame{ErrorOutFrame{.message = message}});
+		}
+		catch (boost::system::system_error const & ex)
+		{
+			spdlog::debug("session: failed to emit ErrorOutFrame ({})", ex.what());
+		}
 
-	try
-	{
-		co_await output_ch_.write(OutFrame{DoneOutFrame{.end_of_turn = false}});
-	}
-	catch (boost::system::system_error const & ex)
-	{
-		spdlog::debug("session: failed to emit terminal DoneOutFrame ({})", ex.what());
+		try
+		{
+			co_await output_ch_.write(OutFrame{DoneOutFrame{.end_of_turn = false}});
+		}
+		catch (boost::system::system_error const & ex)
+		{
+			spdlog::debug("session: failed to emit terminal DoneOutFrame ({})", ex.what());
+		}
 	}
 
 	if (text_in_ch_.is_open())
@@ -436,23 +483,20 @@ boost::cobalt::promise<void> Session::loop_duplex_events()
 	auto const exec = co_await boost::cobalt::this_coro::executor;
 	static constexpr std::size_t kMergedChanCap = 1U;
 	auto merged_ch = std::make_shared<boost::cobalt::channel<DuplexEvent>>(kMergedChanCap, exec);
+	boost::cobalt::wait_group feeders;
 
 	/// Feeder 1: coalesces raw PCM from audio_in_ch_ into fixed-size chunks.
-	boost::cobalt::spawn(  // NOLINT(readability-static-accessed-through-instance)
-		exec, loop_audio_in_ch(merged_ch), boost::asio::detached);
+	feeders.push_back(loop_audio_in_ch(merged_ch));
 
 	/// Feeder 2: forwards TextInput events from speech_ack_ch_.
-	boost::cobalt::spawn(  // NOLINT(readability-static-accessed-through-instance)
-		exec, loop_text_in_ch(merged_ch), boost::asio::detached);
+	feeders.push_back(loop_text_in_ch(merged_ch));
 
 	/// Feeder 3: forwards SpeechChunkAckEvent events from text_in_ch_.
-	boost::cobalt::spawn(  // NOLINT(readability-static-accessed-through-instance)
-		exec, loop_speech_ack_ch(merged_ch), boost::asio::detached);
+	feeders.push_back(loop_speech_ack_ch(merged_ch));
 
 	/// Feeder 4: CLIP encodes VideoFrame events from video_in_ch_ and forwards as
 	/// PendingClipResult.
-	boost::cobalt::spawn(  // NOLINT(readability-static-accessed-through-instance)
-		exec, loop_video_in_ch(merged_ch), boost::asio::detached);
+	feeders.push_back(loop_video_in_ch(merged_ch));
 
 	/// Shared state for the latest CLIP encode result.
 	std::optional<PendingClipResult> pending_clip;
@@ -472,6 +516,7 @@ boost::cobalt::promise<void> Session::loop_duplex_events()
 	uint32_t last_speech_seq = 0;
 	uint32_t last_speech_ack_seq = 0;
 
+	std::exception_ptr loop_error;
 	try
 	{
 		while (true)
@@ -522,6 +567,7 @@ boost::cobalt::promise<void> Session::loop_duplex_events()
 				"session: input audio chunk {}ms → encode + generate", audio_event.duration_ms);
 
 			// Open turn.
+			throw_if_shutdown_requested();
 			co_await open_duplex_unit();
 
 			// Decode audio chunk.
@@ -530,6 +576,9 @@ boost::cobalt::promise<void> Session::loop_duplex_events()
 				batch_decode_audio_on_gpu(
 					std::move(audio_event.pcm), /*need_logits=*/!pending_clip.has_value()),
 				boost::cobalt::use_op);
+			spdlog::debug("session: audio decode finished for current duplex chunk");
+
+			throw_if_shutdown_requested();
 
 			// Save off the latest available CLIP-encoded video frame (so we have a stable
 			// reference to VideoAckOutFrame, below).
@@ -543,11 +592,17 @@ boost::cobalt::promise<void> Session::loop_duplex_events()
 					gpu_ex_.get_executor(),
 					batch_decode_image_on_gpu(std::move(consumed_clip->clip)),
 					boost::cobalt::use_op);
+				spdlog::debug("session: image decode finished for current duplex chunk");
+
+				throw_if_shutdown_requested();
 			}
 
 			DuplexTurnResult turn_result;
 			// Attempt to generate a single chunk of speech (audio + text).
+			spdlog::debug("session: starting duplex chunk generation");
 			turn_result = co_await generate_duplex_chunk();
+			spdlog::debug("session: duplex chunk generation returned");
+			throw_if_shutdown_requested();
 
 			// If speech was generated, send to the client and flag that we need to await ack.
 			if (turn_result.speech_chunk)
@@ -559,7 +614,9 @@ boost::cobalt::promise<void> Session::loop_duplex_events()
 				co_await output_ch_.write(OutFrame{*turn_result.speech_chunk});
 			}
 
+			throw_if_shutdown_requested();
 			co_await finalize_duplex_turn(turn_result);
+			throw_if_shutdown_requested();
 
 			// Send the consumed video frame to the client for rendering, so the user can see
 			// what the llm saw.
@@ -573,10 +630,20 @@ boost::cobalt::promise<void> Session::loop_duplex_events()
 			++current_turn;
 		}
 	}
-	catch (boost::system::system_error const &)
+	catch (boost::system::system_error const & ex)
 	{
-		// merged_ch was closed — both feeders exited. Normal shutdown path.
-		spdlog::debug("session: duplex loop exiting (merged channel closed)");
+		if (is_session_shutdown_error(ex.code()))
+		{
+			spdlog::debug("session: duplex loop exiting during shutdown ({})", ex.what());
+		}
+		else
+		{
+			loop_error = std::current_exception();
+		}
+	}
+	catch (...)
+	{
+		loop_error = std::current_exception();
 	}
 
 	// Cleanup: close channels to wake any remaining blocked tasks.
@@ -598,9 +665,26 @@ boost::cobalt::promise<void> Session::loop_duplex_events()
 		speech_ack_ch_.close();
 	}
 
-	if (current_unit_open_)
+	try
+	{
+		co_await feeders.await_exit(loop_error);
+	}
+	catch (...)
+	{
+		if (loop_error == nullptr)
+		{
+			loop_error = std::current_exception();
+		}
+	}
+
+	if (current_unit_open_ && !shutdown_requested())
 	{
 		co_await close_duplex_unit();
+	}
+
+	if (loop_error != nullptr)
+	{
+		std::rethrow_exception(loop_error);
 	}
 
 	spdlog::info("session: duplex loop exited");
@@ -608,6 +692,8 @@ boost::cobalt::promise<void> Session::loop_duplex_events()
 
 boost::cobalt::promise<void> Session::open_duplex_unit()
 {
+	throw_if_shutdown_requested();
+
 	if (current_unit_open_)
 	{
 		co_return;
@@ -617,6 +703,7 @@ boost::cobalt::promise<void> Session::open_duplex_unit()
 		gpu_ex_.get_executor(),
 		decode_prompt_on_gpu({kTokenUnit}),
 		boost::cobalt::use_op);
+	throw_if_shutdown_requested();
 	current_unit_start_ = conv_.n_past;
 	current_unit_open_ = true;
 }
@@ -634,6 +721,7 @@ boost::cobalt::promise<void> Session::close_duplex_unit()
 		gpu_ex_.get_executor(),
 		decode_prompt_on_gpu({kTokenUnitEnd}),
 		boost::cobalt::use_op);
+	throw_if_shutdown_requested();
 
 	conv_.unit_history.push_back(UnitBlock{.pos_start = current_unit_start_, .pos_end = block_end});
 	current_unit_open_ = false;
@@ -652,11 +740,14 @@ boost::cobalt::promise<void> Session::close_duplex_unit()
 
 boost::cobalt::promise<void> Session::finalize_duplex_turn(DuplexTurnResult result)
 {
+	throw_if_shutdown_requested();
 	co_await output_ch_.write(OutFrame{DoneOutFrame{.end_of_turn = result.end_of_turn}});
+	throw_if_shutdown_requested();
 	co_await close_duplex_unit();
 
 	if (result.end_of_turn)
 	{
+		throw_if_shutdown_requested();
 		co_await boost::cobalt::spawn(
 			gpu_ex_.get_executor(), clear_audio_encoder_kv_on_gpu(), boost::cobalt::use_op);
 	}
@@ -665,6 +756,7 @@ boost::cobalt::promise<void> Session::finalize_duplex_turn(DuplexTurnResult resu
 boost::cobalt::promise<void> Session::handle_text_input_in_duplex(std::string text)
 {
 	spdlog::debug("session: entering duplex-context text turn");
+	throw_if_shutdown_requested();
 
 	if (current_unit_open_)
 	{
@@ -677,6 +769,7 @@ boost::cobalt::promise<void> Session::handle_text_input_in_duplex(std::string te
 		"session: duplex-context text turn - writing done to output_ch (end_of_turn={})",
 		text_turn_completed);
 
+	throw_if_shutdown_requested();
 	co_await output_ch_.write(OutFrame{DoneOutFrame{.end_of_turn = text_turn_completed}});
 
 	spdlog::debug("session: duplex-context text turn complete; duplex resumed");
@@ -707,12 +800,15 @@ boost::cobalt::promise<DuplexTurnResult> Session::generate_duplex_chunk()
 	int step = 0;
 	for (; step < max_duplex_tokens; ++step)
 	{
+		throw_if_shutdown_requested();
+
 		// NOLINTNEXTLINE(cppcoreguidelines-init-variables)
 		SampledOutput const sampled =
 			co_await boost::cobalt::spawn(  // NOLINT(readability-static-accessed-through-instance)
 				gpu_ex_.get_executor(),
 				sample_and_decode_on_gpu(),
 				boost::cobalt::use_op);
+		throw_if_shutdown_requested();
 
 		llama_token const tok = sampled.id;
 
@@ -862,6 +958,7 @@ boost::cobalt::promise<bool> Session::run_simplex_turn_in_duplex(std::string tex
 		gpu_ex_.get_executor(),
 		decode_prompt_on_gpu(std::move(prompt_tokens)),
 		boost::cobalt::use_op);
+	throw_if_shutdown_requested();
 
 	std::string tokens_debugging;
 	bool emitted_visible_text = false;
@@ -872,11 +969,13 @@ boost::cobalt::promise<bool> Session::run_simplex_turn_in_duplex(std::string tex
 	int const max_generation_tokens = cfg_.inference.max_generation_tokens;
 	for (; gen_idx < max_generation_tokens; ++gen_idx)
 	{
+		throw_if_shutdown_requested();
 		SampledOutput const sampled =
 			co_await boost::cobalt::spawn(  // NOLINT(readability-static-accessed-through-instance)
 				gpu_ex_.get_executor(),
 				sample_and_decode_on_gpu(),
 				boost::cobalt::use_op);
+		throw_if_shutdown_requested();
 
 		llama_token const tok = sampled.id;
 
@@ -1030,6 +1129,7 @@ boost::cobalt::promise<bool> Session::run_simplex_turn_in_duplex(std::string tex
 		if (!piece.empty())
 		{
 			emitted_visible_text = true;
+			throw_if_shutdown_requested();
 			co_await output_ch_.write(OutFrame{TextOutFrame{std::move(piece)}});
 		}
 
@@ -1041,13 +1141,14 @@ boost::cobalt::promise<bool> Session::run_simplex_turn_in_duplex(std::string tex
 		gpu_ex_.get_executor(),
 		decode_prompt_on_gpu(std::move(close_tokens)),
 		boost::cobalt::use_op);
+	throw_if_shutdown_requested();
 
 	spdlog::debug("session: duplex-context text turn tokens={}", tokens_debugging);
 
 	co_return gen_idx < max_generation_tokens;
 }
 
-boost::cobalt::task<void> Session::loop_video_in_ch(
+boost::cobalt::promise<void> Session::loop_video_in_ch(
 	std::shared_ptr<boost::cobalt::channel<DuplexEvent>> merged_ch)
 {
 	spdlog::debug("run_clip_loop: starting");
@@ -1059,6 +1160,7 @@ boost::cobalt::task<void> Session::loop_video_in_ch(
 	{
 		while (true)
 		{
+			throw_if_shutdown_requested();
 			/// Block until the next video frame arrives or the input channel closes.
 			// NOLINTNEXTLINE(cppcoreguidelines-init-variables)
 			VideoFrame frame = co_await video_in_ch_.read();
@@ -1085,6 +1187,7 @@ boost::cobalt::task<void> Session::loop_video_in_ch(
 					gpu_ex_.get_executor(),
 					encode_clip_on_gpu(seq, std::move(frame.raw)),
 					boost::cobalt::use_op);
+			throw_if_shutdown_requested();
 
 			last_encode_at = std::chrono::steady_clock::now();
 
@@ -1573,6 +1676,8 @@ boost::cobalt::task<SampledOutput> Session::sample_and_decode_on_gpu()
 		throw std::logic_error{"sample_and_decode_on_gpu: ctx_ or sampler_ is null"};
 	}
 
+	spdlog::debug("sample_and_decode_on_gpu: starting (n_past={})", conv_.n_past);
+
 	/// Sample from the logits at the last decoded position (idx = -1).
 	/// The sampler chain applies temperature scaling then draws from the
 	/// resulting distribution.
@@ -1640,6 +1745,9 @@ boost::cobalt::task<SampledOutput> Session::sample_and_decode_on_gpu()
 		std::span<float const> const emb_span{emb_ptr, static_cast<std::size_t>(n_embd)};
 		hidden.assign(emb_span.begin(), emb_span.end());
 	}
+
+	spdlog::debug(
+		"sample_and_decode_on_gpu: finished token={} (n_past={})", sampled_tok, conv_.n_past);
 
 	co_return SampledOutput{.id = sampled_tok, .hidden = std::move(hidden)};
 }
@@ -1746,7 +1854,7 @@ void Session::flush_debug_audio_wav()
 // ── Buffered audio + duplex loop ──────────────────────────────────────────────
 
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
-boost::cobalt::task<void> Session::loop_audio_in_ch(
+boost::cobalt::promise<void> Session::loop_audio_in_ch(
 	std::shared_ptr<boost::cobalt::channel<DuplexEvent>> merged_ch)
 {
 	try
@@ -1806,7 +1914,7 @@ boost::cobalt::task<void> Session::loop_audio_in_ch(
 }
 
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
-boost::cobalt::task<void> Session::loop_text_in_ch(
+boost::cobalt::promise<void> Session::loop_text_in_ch(
 	std::shared_ptr<boost::cobalt::channel<DuplexEvent>> merged_ch)
 {
 	try
@@ -1832,7 +1940,7 @@ boost::cobalt::task<void> Session::loop_text_in_ch(
 }
 
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
-boost::cobalt::task<void> Session::loop_speech_ack_ch(
+boost::cobalt::promise<void> Session::loop_speech_ack_ch(
 	std::shared_ptr<boost::cobalt::channel<DuplexEvent>> merged_ch)
 {
 	try
@@ -1863,6 +1971,7 @@ boost::cobalt::task<void> Session::batch_decode_audio_on_gpu(
 	std::vector<float> pcm, bool need_logits)
 {
 	// Runs on gpu_ex.
+	throw_if_shutdown_requested();
 	if (cfg_.model.audio_path.empty())
 	{
 		spdlog::warn("batch_decode_audio_on_gpu: no audio context — skipping");
@@ -1878,9 +1987,13 @@ boost::cobalt::task<void> Session::batch_decode_audio_on_gpu(
 		pcm.resize(aligned_size, 0);
 	}
 
+	spdlog::debug("batch_decode_audio_on_gpu: starting audio encoder for {} samples", pcm.size());
 	/// `encode_pcm_audio` runs the Whisper Mel preprocessor and encoder on the
 	/// GPU, producing `[n_tokens × n_embd]` float embeddings from raw PCM.
 	std::vector<float> embeddings = encode_pcm_audio(&models_.audio_ctx(), pcm);
+	spdlog::debug(
+		"batch_decode_audio_on_gpu: audio encoder finished with {} floats", embeddings.size());
+	throw_if_shutdown_requested();
 
 	/// `audition_n_mmproj_embd` returns the embedding dimension (4096) from
 	/// the loaded audio model; must match the LLM's hidden size.
@@ -1912,8 +2025,11 @@ boost::cobalt::task<void> Session::batch_decode_audio_on_gpu(
 		batch.logits[j] = (need_logits && j == n_tokens - 1) ? kLogitEnabled : kLogitDisabled;
 	}
 
+	spdlog::debug("batch_decode_audio_on_gpu: entering llama_decode for {} tokens", n_tokens);
 	int const ret = llama_decode(ctx_.get(), batch);
 	llama_batch_free(batch);
+	spdlog::debug("batch_decode_audio_on_gpu: llama_decode returned {}", ret);
+	throw_if_shutdown_requested();
 
 	if (ret != 0)
 	{
@@ -1923,6 +2039,7 @@ boost::cobalt::task<void> Session::batch_decode_audio_on_gpu(
 
 	conv_.n_past += n_tokens;
 	conv_.last_heard_token_pos = conv_.n_past;
+	spdlog::debug("batch_decode_audio_on_gpu: finished (n_past={})", conv_.n_past);
 	co_return;
 }
 

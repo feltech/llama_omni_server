@@ -628,6 +628,8 @@ boost::cobalt::task<void> teardown_session(
 		scope->workers.size());
 	if (scope->runtime != nullptr)
 	{
+		spdlog::debug("server: teardown_session requesting cooperative session shutdown");
+		scope->runtime->session.request_shutdown();
 		spdlog::debug("server: teardown_session closing session input channels");
 		// Close all input channels; feeder tasks wake with broken_pipe and exit,
 		// causing merged_ch to close and loop_duplex_events() to exit cleanly.
@@ -635,11 +637,11 @@ boost::cobalt::task<void> teardown_session(
 		close_channel_if_open(scope->runtime->text_in_ch);
 		close_channel_if_open(scope->runtime->speech_ack_ch);
 		close_channel_if_open(scope->runtime->video_in_ch);
+		close_channel_if_open(scope->runtime->session_out_ch);
+		close_channel_if_open(scope->runtime->ws_out_ch);
 	}
 	if (scope->workers.size() > 0U)
 	{
-		spdlog::debug("server: teardown_session cancelling worker group");
-		scope->workers.cancel(boost::asio::cancellation_type::all);
 		spdlog::debug("server: teardown_session awaiting worker exit");
 		co_await scope->workers.await_exit(current_error);
 	}
