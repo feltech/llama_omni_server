@@ -132,7 +132,7 @@ Note that the exact filenames depend on the chosen quantization:
 ### Limitations
 
 The project is currently set up to run a single session locally on a single machine and has only
-been tested on Linux (NixOS 25.11 with GCC 15.1).
+been tested on Linux (NixOS 25.11 with GCC 15.2).
 
 Many model hyperparameters are configurable via the YAML config file and the defaults (as in
 `config.example.yaml`), whilst being a good starting point, are very likely suboptimal.
@@ -184,9 +184,10 @@ ctest --test-dir build --output-on-failure --timeout 300
 
 | Variable                             | Purpose                                                                                                                  |
 |--------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
-| `LLAMAOMNISERVER_ENABLE_TESTS`       | Set to `ON` to build the test suite (default: `ON`).                                                                     |
-| `LLAMAOMNISERVER_ENABLE_TEST_VENDOR` | Set to `ON` to build the exploratory vendor integration tests (require GPU and model files).                             |
+| `LLAMAOMNISERVER_ENABLE_TESTS`       | Set to `ON` to build the test suite (default: `OFF`).                                                                    |
+| `LLAMAOMNISERVER_ENABLE_TEST_VENDOR` | Set to `ON` to build the exploratory vendor integration tests.                                                           |
 | `LLAMAOMNISERVER_MODEL_ROOT`         | For vendor tests - directory containing the GGUF model files (parent of `vision/`, `audio/`, `tts/`, `token2wav-gguf/`). |
+
 
 `LLAMAOMNISERVER_MODEL_ROOT` is only required if `LLAMAOMNISERVER_ENABLE_TEST_VENDOR` is
 enabled. Other tests make use of the `config.example.yaml` config file.
