@@ -324,14 +324,39 @@ public:
 		std::string_view type, std::chrono::milliseconds timeout = std::chrono::seconds{30})
 	{
 		auto const deadline = std::chrono::steady_clock::now() + timeout;
+		std::optional<std::string> last_frame_type;
 		while (std::chrono::steady_clock::now() < deadline)
 		{
 			auto const remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
 				deadline - std::chrono::steady_clock::now());
-			auto frame = recv_msgpack(remaining);
-			if (frame.contains("type") && frame["type"].get<std::string>() == type)
+			try
 			{
-				return frame;
+				auto frame = recv_msgpack(remaining);
+				if (!frame.contains("type"))
+				{
+					continue;
+				}
+
+				last_frame_type = frame["type"].get<std::string>();
+				if (*last_frame_type == type)
+				{
+					return frame;
+				}
+			}
+			catch (boost::system::system_error const & ex)
+			{
+				if ((ex.code() == boost::asio::error::eof ||
+					 ex.code() == boost::asio::error::connection_reset ||
+					 ex.code() == boost::beast::websocket::error::closed) &&
+					last_frame_type.has_value())
+				{
+					throw std::runtime_error{std::format(
+						"recv_type: connection closed while waiting for frame type \"{}\" "
+						"after receiving frame type \"{}\"",
+						type,
+						*last_frame_type)};
+				}
+				throw;
 			}
 		}
 		throw std::runtime_error{
@@ -478,21 +503,16 @@ public:
 		while (std::chrono::steady_clock::now() < deadline)
 		{
 			require_running();
-			try
+
+			// Poll the subprocess log instead of opening a probe connection.
+			// A raw TCP connect would be accepted as a real session candidate,
+			// briefly occupying the single-session slot and racing the first
+			// actual test client.
+			if (read_log().contains("WebSocketServer::run acceptor listening on "))
 			{
-				boost::asio::io_context ioc;
-				boost::asio::ip::tcp::socket socket{ioc};
-				boost::asio::ip::tcp::endpoint const endpoint{
-					boost::asio::ip::make_address("127.0.0.1"), port_};
-				socket.connect(endpoint);
-				boost::system::error_code error_code;
-				[[maybe_unused]] auto const close_result = socket.close(error_code);
 				return;
 			}
-			catch (std::exception const &)
-			{
-				std::this_thread::sleep_for(kServerStartPollMs);
-			}
+			std::this_thread::sleep_for(kServerStartPollMs);
 		}
 		throw std::runtime_error{"server subprocess did not start listening before timeout"};
 	}

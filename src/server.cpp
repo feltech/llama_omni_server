@@ -317,15 +317,17 @@ boost::cobalt::promise<wire::InFrame> read_ws_frame(std::shared_ptr<ws_stream_t>
  */
 boost::cobalt::promise<void> busy_reject(tcp_socket_t socket)
 {
-	ws_stream_t websocket{std::move(socket)};
+	auto websocket = std::make_shared<ws_stream_t>(std::move(socket));
 	try
 	{
 		spdlog::debug("server: busy_reject starting websocket upgrade");
-		co_await websocket.async_accept(boost::cobalt::use_op);
-		websocket.binary(true);
-		co_await send_wire_frame(
-			std::make_shared<ws_stream_t>(std::move(websocket)), wire::ServerBusyFrame{});
+		co_await websocket->async_accept(boost::cobalt::use_op);
+		websocket->binary(true);
+		co_await send_wire_frame(websocket, wire::ServerBusyFrame{});
 		spdlog::debug("server: busy_reject sent server_busy response");
+		co_await websocket->async_close(
+			boost::beast::websocket::close_code::normal, boost::cobalt::use_op);
+		spdlog::debug("server: busy_reject closed websocket");
 	}
 	catch (std::exception const & err)
 	{
