@@ -148,11 +148,11 @@ if (LLAMAOMNISERVER_ENABLE_TESTS)
         set_target_properties(test_unit PROPERTIES CXX_CLANG_TIDY "${PROJECT_CXX_CLANG_TIDY}")
     endif ()
 
-    # ── e2e tests (no GPU; real WebSocket over TCP) ───────────────────────────────
+    # ── e2e tests (GPU + model files required); real WebSocket over TCP) ──────────
     add_executable(test_e2e
         tests/e2e/test_ws_session.cpp
     )
-    target_include_directories(test_e2e PRIVATE src tests/integration)
+    target_include_directories(test_e2e PRIVATE src)
     target_compile_definitions(test_e2e PRIVATE LLAMAOMNISERVER_TEST_SERVER_EXE="$<TARGET_FILE:omni_server>")
     target_link_libraries(test_e2e PRIVATE Catch2::Catch2WithMain omni_server_lib)
     target_link_libraries(test_e2e PRIVATE omni_model_lib)

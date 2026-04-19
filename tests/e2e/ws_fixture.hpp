@@ -58,10 +58,10 @@
 #include <nlohmann/json.hpp>
 #include <yaml-cpp/yaml.h>
 
+#include "../session_harness.hpp"
 #include "config/config_loader.hpp"
 #include "protocol.hpp"
 #include "server.hpp"
-#include "session_harness.hpp"
 
 namespace llama_omni_server::test
 {

@@ -40,8 +40,8 @@
 #include <boost/cobalt/task.hpp>
 #include <boost/cobalt/wait_group.hpp>
 
+#include "../session_harness.hpp"
 #include "session.hpp"
-#include "session_harness.hpp"
 #include "wav.hpp"
 
 namespace llama_omni_server::test

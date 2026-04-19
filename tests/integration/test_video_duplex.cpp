@@ -41,8 +41,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <spdlog/spdlog.h>
 
+#include "../session_harness.hpp"
 #include "session.hpp"
-#include "session_harness.hpp"
 #include "wav.hpp"
 
 namespace llama_omni_server::test

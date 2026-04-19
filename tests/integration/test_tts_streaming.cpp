@@ -39,8 +39,8 @@
 #include <boost/cobalt/channel.hpp>
 #include <boost/cobalt/task.hpp>
 
+#include "../session_harness.hpp"
 #include "session.hpp"
-#include "session_harness.hpp"
 #include "wav.hpp"
 
 namespace llama_omni_server::test
